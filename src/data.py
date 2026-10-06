@@ -72,8 +72,66 @@ def read_prices_filtered(item_ids, store_ids) -> pd.DataFrame:
     return prices.reset_index(drop=True)
 
 
-def inspect_raw() -> None:
+class SchemaError(RuntimeError):
+    pass
+
+
+def _check(cond: bool, msg: str, failures: list) -> None:
+    print(f"  [{'OK' if cond else 'FAIL'}] {msg}")
+    if not cond:
+        failures.append(msg)
+
+
+def validate_schema() -> None:
+    """Structural checks on the raw files. Reads identifiers/keys only, never holdout-period sales values."""
     _require_raw()
+    f: list = []
+    print("== Schema / integrity checks ==")
+    header = list(pd.read_csv(config.SALES_CSV, nrows=0).columns)
+    day_cols = [c for c in header if c.startswith("d_")]
+    _check(all(c in header for c in ID_COLS), f"sales has id columns {ID_COLS}", f)
+    _check(day_cols == [f"d_{i}" for i in range(1, config.HOLDOUT_END_DAY + 1)],
+           f"sales day columns are exactly d_1..d_{config.HOLDOUT_END_DAY}", f)
+    ids = pd.read_csv(config.SALES_CSV, usecols=ID_COLS)
+    _check(ids["id"].is_unique, "sales id is unique", f)
+    _check(not ids.duplicated(["item_id", "store_id"]).any(), "sales (item_id, store_id) is unique", f)
+    _check((ids["state_id"] == config.STATE_ID).any(), f"state {config.STATE_ID} present", f)
+    _check((ids["dept_id"] == config.DEPT_ID).any(), f"dept {config.DEPT_ID} present", f)
+    _check((ids["store_id"].str[:2] == ids["state_id"]).all(), "store_id prefix matches state_id", f)
+    _check((ids["item_id"].str.rsplit("_", n=1).str[0] == ids["dept_id"]).all(), "item_id prefix matches dept_id", f)
+
+    cal = pd.read_csv(config.CALENDAR_CSV)
+    need_cal = ["date", "wm_yr_wk", "weekday", *[c for c in CAL_COLS if c != "date"]]
+    _check(all(c in cal.columns for c in need_cal), f"calendar has {need_cal}", f)
+    cal_days = cal["d"].map(day_num)
+    _check(cal["d"].is_unique and (cal_days.diff().dropna() == 1).all() and cal_days.iloc[0] == 1,
+           "calendar d is unique, contiguous, starts at d_1", f)
+    _check(cal_days.max() >= config.HOLDOUT_END_DAY, f"calendar covers through d_{config.HOLDOUT_END_DAY}", f)
+    _check((pd.to_datetime(cal["date"]).diff().dropna() == pd.Timedelta(days=1)).all(), "calendar dates are consecutive", f)
+    wk = cal.groupby("wm_yr_wk")["d"].agg("size")
+    _check(cal["wm_yr_wk"].is_monotonic_increasing, "wm_yr_wk is non-decreasing over days", f)
+    _check((wk.iloc[:-1] == 7).all(), "every wm_yr_wk except possibly the last has 7 days", f)
+    _check(cal["weekday"].iloc[0] == "Saturday", "weeks start on Saturday (d_1 is a Saturday)", f)
+
+    prices = pd.read_csv(config.PRICES_CSV)
+    _check(list(prices.columns) == ["store_id", "item_id", "wm_yr_wk", "sell_price"],
+           "sell_prices columns are store_id, item_id, wm_yr_wk, sell_price", f)
+    _check(not prices.duplicated(["store_id", "item_id", "wm_yr_wk"]).any(), "price key (store, item, week) is unique", f)
+    _check(prices["wm_yr_wk"].isin(cal["wm_yr_wk"]).all(), "every price week exists in calendar", f)
+    _check(prices["sell_price"].notna().all() and (prices["sell_price"] > 0).all(), "sell_price present and > 0", f)
+    scope = ids[(ids["state_id"] == config.STATE_ID) & (ids["dept_id"] == config.DEPT_ID)]
+    priced = prices.merge(scope[["item_id", "store_id"]], on=["item_id", "store_id"])
+    _check(len(priced.drop_duplicates(["item_id", "store_id"])) == len(scope),
+           "every CA/FOODS_3 series has at least one price row", f)
+    _check(prices.merge(ids[["item_id", "store_id"]], on=["item_id", "store_id"], how="left", indicator=True)["_merge"]
+           .eq("both").all(), "every price row maps to a sales series", f)
+    if f:
+        raise SchemaError(f"{len(f)} schema/integrity check(s) failed: {f}")
+    print("  all schema checks passed\n")
+
+
+def inspect_raw() -> None:
+    validate_schema()
     wide, n_raw = read_sales_wide_filtered()
     day_cols = [c for c in wide.columns if c.startswith("d_")]
     ca_all = pd.read_csv(config.SALES_CSV, usecols=["state_id", "store_id", "dept_id"])

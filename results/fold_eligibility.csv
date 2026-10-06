@@ -1,0 +1,4 @@
+fold,origin,total_candidates,excluded_not_yet_active,excluded_insufficient_history,excluded_invalid_scale,eligible
+fold_1,d_1829,3292,3,2,0,3287
+fold_2,d_1857,3292,0,5,0,3287
+fold_3,d_1885,3292,0,5,0,3287
