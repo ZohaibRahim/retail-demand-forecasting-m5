@@ -168,7 +168,7 @@ Total daily units across the 3,290 eligible series:
 
 **Gain is dominated by `rolling_mean_56`**, followed by `item_id`, the shorter rolling means, `lag_28`, `rolling_std_28`, `month` and `wday`.
 
-- **Price features rank low.** This is plausible given they are at least 28 days old.
+- **Price features rank low.** This is plausible given they are at least 28 days old relative to each target day.
 - **The ranking matches validation.** The top five are identical to the validation model (fold 3), and the remaining ranks barely move.
 - **No leakage-like feature appears.**
 - **`item_id` has by far the most splits.** That is expected for an 823-level identifier carrying item-level demand, but it is a capacity/overfitting consideration.
@@ -181,7 +181,7 @@ Scaled RMSE by forecast horizon, for h = 1…28 (`results/scaled_rmse_by_horizon
 
 - **LightGBM vs trailing-28.** The two track each other closely at every horizon. LightGBM is lower on most days; trailing-28 is marginally lower at h = 1, 8 and 14.
 - **Naive baselines.** Both are much worse throughout. For h = 22–28 they are *identical by construction*, because both forecast from days `O−6 … O`.
-- **Peaks.** The error peaks repeat every 7 days, at the weekend days. Day-of-week effects, not forecast distance, drive most of the variation.
+- **Peaks.** The error peaks repeat every 7 days, on weekend days. The repeating seven-day error pattern suggests weekday/weekend seasonality contributes more to variation than forecast distance alone.
 
 Averaging these 28 values does **not** equal the headline mean per-series RMSSE, because the two aggregate in a different order.
 
@@ -197,8 +197,9 @@ Averaging these 28 values does **not** equal the headline mean per-series RMSSE,
   - There is little signal to exploit beyond the level.
 - **Clear LightGBM loss — `FOODS_3_746_CA_3`.** RMSSE 1.87 vs 0.57 for weekly naive.
   - Demand fell from ≈ 15/day to ≈ 6/day in the final week before the origin, then averaged ≈ 4.8/day in the holdout.
-  - Weekly naive used that last week.
-  - LightGBM's newest sales information is 28 days old, so it could not see the drop and predicted ≈ 14/day.
+  - For much of the 28-day horizon, LightGBM could not use the sharp demand drop immediately before the forecast origin, because sales-derived features were constrained to `t − 28`. It predicted ≈ 14/day on average.
+  - Only the final horizon days (h ≈ 22–28) could reach into that last pre-origin week, and even then mainly through lag and rolling features that also averaged the older, higher sales.
+  - The weekly-naive baseline could use the final observed week directly.
   - This is the direct cost of the 28-day information boundary.
 
 **Extreme series.** The largest RMSSEs are shared by every model.
@@ -215,7 +216,7 @@ Neither is forecastable from history under this information set. They were not c
 - **Metric:** no full official hierarchical M5 WRMSSE. Metrics are a project-specific per-series RMSSE.
 - **Point forecasts only:** no probabilistic intervals, so safety-stock decisions are not supported.
 - **Restricted information:**
-  - Prices and sales are at least 28 days old.
+  - Sales and price information is at least 28 days old relative to each target day.
   - Future planned prices and promotions are not used.
   - Stockouts are not modelled: zero sales are treated as genuine demand.
 - **Limited tuning:** only three predefined configurations. Their differences were within fold-to-fold noise.
@@ -226,7 +227,7 @@ Neither is forecastable from history under this information set. They were not c
 1. **Add known-ahead planned-price and promotion features supplied by the retailer at the forecast origin.** Real retailers often know future planned prices and promotions. This project intentionally adopted a simple 28-day historical information boundary instead.
 2. **Use fresher sales information for early horizons.** Options are horizon-specific direct models, or a recursive/hybrid approach. This targets the failure seen in `FOODS_3_746_CA_3`.
 3. **Make the forecasts usable for inventory decisions:**
-   - correct the systematic under-forecast;
+   - address the systematic under-forecast by evaluating calibration or bias-correction methods on the validation folds before applying them to a future holdout (never calibrating against results already inspected);
    - add probabilistic (quantile) forecasts.
 4. **Detect likely stockouts** and treat stockout-driven zeros differently from genuine zero demand.
 5. **Extend to all states and departments** and implement the full hierarchical WRMSSE.

@@ -173,7 +173,7 @@ Walk-forward validation imitates real use. Train on everything up to a date, for
 
   That is about a 0.2% average improvement: slightly worse in folds 1–2, 0.8% better in fold 3. LightGBM is clearly better than lag-28 and weekly naive, by about 22–25%.
 - **Where it wins and loses.** LightGBM beats trailing-28 on 52–60% of individual series and does better on medium- and high-volume series. It does worse on the lowest-volume quartile, which pulls its mean RMSSE up.
-- **It under-forecasts total units:** −11% in fold 1, −5% in fold 2, −2% in fold 3. One likely reason is that every feature is at least 28 days old, so the model sees demand growth late.
+- **It under-forecasts total units:** −11% in fold 1, −5% in fold 2, −2% in fold 3. One likely reason is that every sales and price feature is at least 28 days old relative to its target day, so the model sees demand growth late. Calendar features are not lagged.
 - **Feature importance looks plausible.** `rolling_mean_56` dominates, followed by `item_id`, then the shorter rolling means, `lag_28`, and calendar features. Price features rank lower.
   - `item_id` has the most splits (823 levels). That is expected identity information, not leakage, but it is a capacity/overfitting risk worth mentioning.
 
@@ -234,7 +234,7 @@ The holdout is the only number that was never used to make a decision. Validatio
 - **Total units:** 233,777 actual vs 223,565 predicted, a **4.4% under-forecast** (the same direction as in validation).
 - **Feature importance:** the same pattern as validation. `rolling_mean_56` dominates, then `item_id`.
 - **Win example (`FOODS_3_236_CA_3`):** LightGBM wins when a recent surge does not last. Its longer-window features pull it back toward the long-run level.
-- **Loss example (`FOODS_3_746_CA_3`):** LightGBM loses when demand changes inside the last 28 days. It literally cannot see the change.
+- **Loss example (`FOODS_3_746_CA_3`):** LightGBM loses when demand shifts sharply just before the origin. For target `O+h`, sales features stop at `O+h−28`, so most of the horizon cannot use the final pre-origin week. Only the last few horizon days (h ≈ 22–28) can partly reach it. Weekly naive uses that week directly.
 - **Unforecastable series:** some are unforecastable for *every* model. `FOODS_3_444_CA_2` had 332 zero-sales days, then sold 7/day.
 
 ### Key assumptions
