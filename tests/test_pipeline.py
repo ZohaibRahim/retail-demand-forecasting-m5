@@ -105,3 +105,25 @@ def test_holdout_setup_uses_hidden_days_only_when_requested(synthetic_project):
     assert not fs.actual.isna().any().any()
     hidden = run.setup_fold(run.load_context(), HOLDOUT)
     assert hidden.actual.isna().all().all()  # default loader never exposes d_1914-d_1941
+
+
+def test_holdout_command_end_to_end_then_refuses_rerun(synthetic_project, monkeypatch):
+    import json
+
+    monkeypatch.setattr(run, "_run_tests", lambda: None)
+    (config.RESULTS_DIR / "best_config.json").write_text(
+        json.dumps({"config": "T", "num_leaves": 7, "learning_rate": 0.1, "rounds": 5})
+    )
+    run.main(["holdout", "--run-holdout"])
+    for name in ["holdout_metrics.csv", "feature_importance.csv", "feature_importance.png",
+                 "holdout_daily_forecast.png", "scaled_rmse_by_horizon.csv", "scaled_rmse_by_horizon.png",
+                 "holdout_series_rmsse.csv", "fold_eligibility.csv"]:
+        assert (config.RESULTS_DIR / name).exists(), name
+    res = pd.read_csv(config.RESULTS_DIR / "holdout_metrics.csv")
+    assert set(res["model"]) == {"lightgbm", "lag28", "trailing28_mean", "weekly_seasonal_naive"}
+    assert res["n_series"].nunique() == 1
+    assert len(pd.read_csv(config.RESULTS_DIR / "scaled_rmse_by_horizon.csv")) == 28
+    before = (config.RESULTS_DIR / "holdout_metrics.csv").read_bytes()
+    with pytest.raises(SystemExit):
+        run.main(["holdout", "--run-holdout"])
+    assert (config.RESULTS_DIR / "holdout_metrics.csv").read_bytes() == before

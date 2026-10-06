@@ -349,6 +349,30 @@ def cmd_holdout(args):
     )
     plots.daily_forecast(daily, config.RESULTS_DIR / "holdout_daily_forecast.png")
 
+    per_series = pd.DataFrame(
+        {name: metrics.per_series_rmsse(a, p.to_numpy(float), q) for name, p in preds.items()},
+        index=fs.eligible_ids,
+    )
+    per_series.insert(0, "q", q)
+    per_series.insert(1, "actual_mean", a.mean(axis=1))
+    per_series.insert(2, "lightgbm_pred_mean", pred.to_numpy(float).mean(axis=1))
+    per_series.rename_axis("id").reset_index().to_csv(config.RESULTS_DIR / "holdout_series_rmsse.csv", index=False)
+    long_preds = pd.concat(
+        {name: p.rename_axis(index="id", columns="d").stack().rename("pred") for name, p in preds.items()},
+        names=["model"],
+    ).reset_index()
+    long_preds.to_parquet(config.PROCESSED_DIR / "holdout_predictions.parquet", index=False)
+
+    total_a, total_p = a.sum(), pred.to_numpy(float).sum()
+    print(f"\n[holdout] training rows: {n_train:,}, train time {runtime:.1f}s, last training day d_{train_max}")
+    print(f"[holdout] eligibility: {eligibility_counts(fs.elig, 'holdout', HOLDOUT.origin)}")
+    print(f"[holdout] total units actual {total_a:,.0f} | LightGBM {total_p:,.0f} "
+          f"({(total_p - total_a) / total_a * 100:+.1f}%)")
+    print("\n== Scaled RMSE by forecast horizon ==")
+    print_table(horizon)
+    print("\n== Top 15 feature importances (gain) ==")
+    print_table(imp.head(15))
+
     print("\n== Holdout metrics ==")
     print_table(res)
     print("\n".join(_comparison_rows(res, "lightgbm")))

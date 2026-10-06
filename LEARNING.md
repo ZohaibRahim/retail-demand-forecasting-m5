@@ -185,3 +185,68 @@ Walk-forward validation imitates real use. Train on everything up to a date, for
 ### 5-minute exercise
 
 From `results/tuning_results.csv`, compute config B's fold-to-fold range (max − min mean RMSSE). Compare it with the gap between configs A and B on their averages. Then write one sentence a hiring manager would accept as an honest summary of the tuning result.
+
+---
+
+## Checkpoint 4 — Final holdout evaluation (run once)
+
+### What we built
+
+- **The single run:** after explicit authorization, frozen config B was retrained on every post-launch row from d_1000 to d_1913 (2,862,680 rows). It forecast d_1914–d_1941 once, for 3,290 eligible series. The three baselines were scored on exactly the same series.
+- **Pre-run checks:**
+  - tests passed;
+  - no previous holdout file existed;
+  - training ended at d_1913;
+  - a real-data corruption check confirmed holdout features cannot see anything after `t − 28`.
+
+### Why it matters
+
+The holdout is the only number that was never used to make a decision. Validation picked the model, so validation scores are slightly optimistic: we chose whatever happened to score best on them. The holdout is the honest estimate, and it only stays honest if it is run once and never acted on.
+
+### Code I should understand
+
+1. **`run.check_holdout_allowed`** runs twice in `cmd_holdout`: once at the start, and again just before writing. `open(..., "x")` refuses to create the file if it already exists.
+2. **`run.cmd_holdout`**:
+   - reruns `pytest`;
+   - loads `best_config.json`;
+   - uses `load_context(include_holdout=True)`, the *only* place the hidden days are loaded;
+   - asserts that the final training day is d_1913.
+3. **`metrics.scaled_rmse_by_horizon`** computes, for each horizon day, `sqrt(mean_i(error² / q_i))` across series. That is a different aggregation order from the headline mean per-series RMSSE.
+4. **`results/holdout_series_rmsse.csv`** holds the per-series RMSSE for every model. The three example series were chosen from it by a fixed rule.
+
+### Leakage protection
+
+- `data.load_cache(include_holdout=False)` is the default, so no earlier stage could see d_1914+.
+- `history_matrix(..., origin=1913)` limits the baselines and the RMSSE scale to data ≤ d_1913. The scale file physically ends at d_1913.
+- The pre-run corruption test: rebuilding features after replacing every sale after `t − 28` and every price week ending after `t − 28` left the holdout features identical.
+
+### Results (holdout, mean per-series RMSSE)
+
+| Model | Mean RMSSE |
+|---|---|
+| Lag-28 | 1.037 |
+| Weekly naive | 0.996 |
+| Trailing-28 mean | 0.778 |
+| **LightGBM B** | **0.769** |
+
+- **Change in error:** LightGBM is 25.8%, 22.7% and 1.2% lower than lag-28, weekly naive and trailing-28 respectively. It also has the lowest pooled MAE (1.557) and RMSE (2.892).
+- **Honest reading:** LightGBM is far better than the naive baselines, and only modestly better than the trailing-28 mean, consistent with validation's near-tie.
+- **Total units:** 233,777 actual vs 223,565 predicted, a **4.4% under-forecast** (the same direction as in validation).
+- **Feature importance:** the same pattern as validation. `rolling_mean_56` dominates, then `item_id`.
+- **Win example (`FOODS_3_236_CA_3`):** LightGBM wins when a recent surge does not last. Its longer-window features pull it back toward the long-run level.
+- **Loss example (`FOODS_3_746_CA_3`):** LightGBM loses when demand changes inside the last 28 days. It literally cannot see the change.
+- **Unforecastable series:** some are unforecastable for *every* model. `FOODS_3_444_CA_2` had 332 zero-sales days, then sold 7/day.
+
+### Key assumptions
+
+- The holdout result is now fixed. Any further change to features, parameters or baselines would mean this holdout is no longer untouched.
+- Zero sales are treated as true demand, so possible stockouts (like `FOODS_3_444_CA_2`) are counted as forecasting errors.
+
+### Check yourself
+
+1. Why is the validation average for config B (0.746) not a fair estimate of how it will perform on new data, while the holdout (0.769) is?
+2. Looking at `FOODS_3_746_CA_3`, which single design decision caused the loss, and what extension would most directly fix it?
+
+### 5-minute exercise
+
+Open `results/scaled_rmse_by_horizon.csv`. Find the horizons where lag-28 and weekly-seasonal-naive have *identical* values. Then prove, using the two baseline definitions and origin `O`, why they must be identical there. Hint: for which `h` does `O + h − 28` fall in `O−6 … O`?
