@@ -14,7 +14,7 @@ This is an **offline historical backtest**, not a production forecasting system.
 
 ## 2. Dataset
 
-[M5 Forecasting – Accuracy](https://www.kaggle.com/competitions/m5-forecasting-accuracy) (Walmart unit sales, 2011-01-29 to 2016-05-22). The project uses:
+[M5 Forecasting — Accuracy](https://www.kaggle.com/competitions/m5-forecasting-accuracy) (Walmart unit sales, 2011-01-29 to 2016-05-22). The project uses:
 
 - `sales_train_evaluation.csv`: 30,490 item-store series, d_1–d_1941;
 - `calendar.csv`: 1,969 days, with events and SNAP flags;
@@ -188,7 +188,7 @@ Averaging these 28 values does **not** equal the headline mean per-series RMSSE,
 **Example series** (chosen by rule, not by eye: among series averaging at least 1 unit/day in the holdout, the extreme and middle values of LightGBM RMSSE ÷ best baseline RMSSE):
 
 - **Clear LightGBM win — `FOODS_3_236_CA_3`.** RMSSE 0.53 vs 0.92 for the best baseline.
-  - The series rose from ≈ 0/day (d_1830–1857) to ≈ 7.9/day just before the origin, then sold ≈ 4.7/day in the holdout.
+  - The series rose from ≈ 0/day (d_1830–d_1857) to ≈ 7.9/day just before the origin, then sold ≈ 4.7/day in the holdout.
   - Trailing-28 projected 7.9/day.
   - LightGBM, leaning on longer windows and item-level patterns, predicted ≈ 3.9/day.
   - This win comes partly from *shrinking toward longer history* when a recent surge did not persist, not from foresight.
@@ -249,15 +249,40 @@ python -m src.run holdout --run-holdout             # final holdout (refuses to 
 
 Developed with Python 3.12.
 
-## 18. Interview Discussion / Key Design Decisions
+## 18. Key Design Decisions
 
-To be written after the project owner has answered the interview questions themselves.
+### Why use a 28-day information boundary?
 
-Key decisions to discuss:
+- The project produces all 28 forecast days at once. To keep every target leakage-safe under the same rule, sales- and price-derived features for target day t use information no later than t − 28.
+- This is deliberately conservative. It means the model cannot use the most recent sales observations for early forecast horizons, but it makes the information boundary simple, reproducible, and easy to audit.
 
-- the 28-day information boundary;
-- the completed-week price rule;
-- active start vs RMSSE scaling start;
-- per-series RMSSE vs pooled metrics;
-- why the trailing-28 mean is hard to beat;
-- the single-shot holdout.
+### Why only use price weeks that have fully ended?
+
+- M5 prices are weekly rather than daily. A week containing t − 28 may include days later than the permitted cutoff.
+- The project therefore only uses a weekly price once the entire week has ended on or before t − 28. As a result, price information is effectively about 28–34 days old.
+- A real retailer may know planned future prices and promotions in advance; adding those known-ahead variables would be a logical next step.
+
+### Why are active start and RMSSE scaling start different?
+
+- They answer different questions.
+- Active start is based on the first completed week in which an item-store series has a price. It determines when the product is treated as launched and is used for training-history and eligibility rules.
+- RMSSE scaling start begins at the first non-zero sale. It determines the historical variability against which forecast error is scaled.
+- Keeping the two definitions separate avoids treating pre-launch zeros as genuine demand while preserving the intended interpretation of RMSSE.
+
+### Why use per-series RMSSE as the primary metric but pooled MAE and RMSE as secondary metrics?
+
+- Products sell at very different volumes. Raw RMSE from a high-volume item cannot be compared directly with RMSE from a low-volume item.
+- RMSSE scales each series' error using that series' own historical one-step variation, allowing performance to be compared across thousands of item-store series. Mean per-series RMSSE is therefore the primary model-selection metric.
+- MAE and RMSE are also reported by pooling all eligible item-store-day predictions. They remain useful because they express error directly in units sold.
+
+### Why is the trailing-28 mean hard to beat?
+
+- Retail demand contains substantial short-term level information. Averaging the final 28 observed days gives the baseline access to very recent demand immediately before the forecast origin.
+- The LightGBM model deliberately does not have equally recent sales-derived features because of the 28-day information boundary. This makes trailing-28 a strong benchmark rather than a deliberately weak baseline.
+- On the final holdout, LightGBM reduced mean RMSSE by only 1.2% relative to trailing-28, despite beating lag-28 by 25.8% and weekly seasonal naive by 22.7%. The result shows why sophisticated models should be tested against strong simple alternatives rather than assumed to be better.
+
+### Why was the final holdout evaluated only once?
+
+- The three walk-forward validation folds were used for model comparison and configuration selection. The final period, d_1914–d_1941, was kept untouched until the model configuration, features, baselines, eligibility rules, and metrics were frozen.
+- The holdout was then evaluated once.
+- No model or feature changes were made after seeing its results. This preserves the holdout as a genuine estimate of performance on unseen future data rather than another tuning set.
